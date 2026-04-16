@@ -138,6 +138,7 @@ async function performRequest(params: IpcRequest): Promise<IpcResponse> {
                     time: responseTime,
                     traceId: traceId
                 }
+
                 // 存储请求记录到数据库
                 const finalHeaders =  { ...headers, ...headersToRecord((options.headers || {} ) as http.OutgoingHttpHeaders) }
                 try {
