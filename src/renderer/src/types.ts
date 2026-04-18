@@ -25,6 +25,11 @@ interface UserInfo {
     role: string
 }
 
+interface LogEntry {
+    timestamp: string
+    line: string
+    level?: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG'
+}
 declare global {
     interface Window {
         api: {
@@ -35,6 +40,7 @@ declare global {
             saveToken: (domain: string, token: string) => Promise<void>
             getTokenDomains: () => Promise<string[]>
             deleteToken: (domain: string) => Promise<void>
+            fetchLogs: (traceId: string) => Promise<LogEntry[]>
         }
     }
 }

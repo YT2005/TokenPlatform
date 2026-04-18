@@ -1,3 +1,8 @@
+process.env.HTTP_PROXY = ''
+process.env.HTTPS_PROXY = ''
+process.env.NO_PROXY = 'localhost,127.0.0.1'
+
+
 import { app, BrowserWindow  } from 'electron';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';

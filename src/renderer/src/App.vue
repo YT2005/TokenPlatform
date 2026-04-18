@@ -90,9 +90,50 @@
           <KeyValueTable v-model="responseHeaders" :readonly="true" />
         </el-tab-pane>
         <el-tab-pane label="日志" name="logs">
-          <div class="logs-placeholder">（后续关联 TraceID 日志）</div>
-        </el-tab-pane>
-      </el-tabs>
+          <div class="logs-container">
+            <div class="logs-toolbar">
+              <el-button
+                  type="primary"
+                  size="small"
+                  :loading="logsLoading"
+                  @click="fetchLogsForCurrentRequest"
+                  :disabled="!lastTraceId"
+              >
+                刷新日志
+              </el-button>
+              <div v-if="lastTraceId" class="trace-id-container">
+                <span class="trace-id-label">TraceID:</span>
+                <code class="trace-id-value">{{ formatTraceId(lastTraceId) }}</code>
+                <el-button
+                    size="small"
+                    text
+                    @click="copyTraceId"
+                    title="复制完整 TraceID"
+                >
+                  <el-icon><CopyDocument /></el-icon>
+                </el-button>
+              </div>
+              <el-button
+                  v-if="lastTraceId"
+                  size="small"
+                  text
+                  @click="openInGrafana"
+                  title="在 Grafana 中查看"
+              >
+                <el-icon><DataAnalysis /></el-icon>
+              </el-button>
+            </div>
+            <div class="logs-list" v-loading="logsLoading">
+              <div v-if="logEntries.length === 0" class="logs-empty">
+                暂无日志，请先发送请求
+              </div>
+              <div v-for="(log, index) in logEntries" :key="index" class="log-entry" :class="`log-${log.level?.toLowerCase()}`">
+                <span class="log-time">{{ formatTime(log.timestamp) }}</span>
+                <span class="log-line">{{ log.line }}</span>
+              </div>
+            </div>
+          </div>
+        </el-tab-pane>      </el-tabs>
     </aside>
   </div>
 </template>
@@ -106,6 +147,7 @@ import KeyValueTable from './components/KeyValueTable.vue'
 import BodyEditor from './components/BodyEditor.vue'
 import AuthPanel from './components/AuthPanel.vue'
 import {ElMessage} from "element-plus";
+import { CopyDocument, DataAnalysis } from '@element-plus/icons-vue'
 
 
 
@@ -165,6 +207,62 @@ const handleNodeClick = (data: any) => {
   }
 }
 
+// 响应式数据
+const logsLoading = ref(false)
+const logEntries = ref<Array<{ timestamp: string; line: string; level?: string }>>([])
+const lastTraceId = ref<string | null>(null)
+
+// 格式化时间
+const formatTime = (iso: string) => {
+  const date = new Date(iso)
+  return date.toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 })
+}
+// 获取当前请求的日志
+const fetchLogsForCurrentRequest = async () => {
+  if (!lastTraceId.value) return
+  logsLoading.value = true
+  try {
+    logEntries.value = await window.api.fetchLogs(lastTraceId.value)
+  } catch (e) {
+    ElMessage.error('获取日志失败')
+    console.error(e)
+  } finally {
+    logsLoading.value = false
+  }
+}
+// 格式化 TraceID 显示（前8后6，中间省略）
+const formatTraceId = (traceId: string) => {
+  if (traceId.length <= 20) return traceId
+  return `${traceId.slice(0, 8)}...${traceId.slice(-6)}`
+}
+
+// 复制 TraceID 到剪贴板
+const copyTraceId = async () => {
+  if (!lastTraceId.value) return
+  try {
+    await navigator.clipboard.writeText(lastTraceId.value)
+    ElMessage.success('TraceID 已复制到剪贴板')
+  } catch (e) {
+    // 降级方案（某些环境 clipboard API 不可用）
+    const input = document.createElement('input')
+    input.value = lastTraceId.value
+    document.body.appendChild(input)
+    input.select()
+    document.execCommand('copy')
+    document.body.removeChild(input)
+    ElMessage.success('TraceID 已复制')
+  }
+}
+const openInGrafana = () => {
+  if (!lastTraceId.value) return
+  const query = encodeURIComponent(`{container="mock-backend"} |= \`${lastTraceId.value}\``)
+  const url = `http://localhost:3001/explore?orgId=1&left=${JSON.stringify({
+    datasource: 'Loki',
+
+    range: { from: 'now-1h', to: 'now' }
+  })}`
+  window.open(url, '_blank')
+}
 const sendRequest = async () => {
   // 重置响应显示
   statusCode.value = null
@@ -192,6 +290,7 @@ const sendRequest = async () => {
     // 3. 准备请求体（根据 Body 类型处理，当前简化为直接使用 body 字符串）
     const requestBody = body.value
 
+
     //4. 调用主进程代理
     const response = await window.api.sendRequest({
       url: fullUrl,
@@ -210,8 +309,13 @@ const sendRequest = async () => {
       value: value as string
     }))
 
-    // 可选：显示 TraceID（后续可扩展）
+    // 显示 TraceID
+    lastTraceId.value = response.traceId || null
     console.log('TraceID:', response.traceId)
+    // 自动拉取日志
+    if (lastTraceId.value) {
+       fetchLogsForCurrentRequest()
+    }
 
   } catch (error: any) {
     statusCode.value = 0
@@ -237,6 +341,8 @@ const handleUserCommand = async (cmd: string) => {
     currentUser.value = await window.api.login()
   }
 }
+
+
 </script>
 
 <style scoped>
@@ -318,5 +424,79 @@ const handleUserCommand = async (cmd: string) => {
   color: #909399;
   text-align: center;
   padding: 40px 0;
+}
+.logs-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.logs-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.logs-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.trace-id-container {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #f5f7fa;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.trace-id-label {
+  font-size: 12px;
+  color: #909399;
+}
+
+.trace-id-value {
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 12px;
+  color: #303133;
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+.trace-id {
+  font-family: monospace;
+  font-size: 12px;
+  color: #909399;
+}
+.logs-list {
+  flex: 1;
+  overflow-y: auto;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  padding: 8px;
+  border-radius: 4px;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 12px;
+}
+.log-entry {
+  padding: 2px 0;
+  border-bottom: 1px solid #3c3c3c;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.log-time {
+  color: #858585;
+  margin-right: 12px;
+}
+.log-info { color: #4ec9b0; }
+.log-warn { color: #dcdcaa; }
+.log-error { color: #f14c4c; }
+.log-debug { color: #ce9178; }
+.logs-empty {
+  text-align: center;
+  color: #858585;
+  padding: 20px;
 }
 </style>

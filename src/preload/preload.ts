@@ -42,6 +42,7 @@ contextBridge.exposeInMainWorld('api', {
     getTokenDomains: ()=>
         ipcRenderer.invoke('vault:getDomains'),
     deleteToken: (domain : string) =>
-        ipcRenderer.invoke('vault:deleteToken', domain)
+        ipcRenderer.invoke('vault:deleteToken', domain),
+    fetchLogs: (traceId: string) => ipcRenderer.invoke('logs:fetchByTraceId', traceId)
 
 })

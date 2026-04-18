@@ -3,6 +3,7 @@ import * as http from 'http'
 import * as https from 'https'
 import { URL } from 'url'
 import { encryptedDB } from "./database/encrypted-db";
+import { fetchLogsByTraceId } from './services/log-services'
 import crypto from 'crypto';
 // 请求参数接口
 interface IpcRequest {
@@ -67,19 +68,19 @@ async function performRequest(params: IpcRequest): Promise<IpcResponse> {
 
     // TraceID 生成与注入
     const traceId = generateTraceId()
+    console.log(`[RequestHandler] create TraceID: ${traceId}`)
     // 构建请求头，注入 TraceID
     const requestHeaders: http.OutgoingHttpHeaders = {
         ...headers,
+        'x-Trace-Id': traceId,
         'Host': parsedUrl.host,
-    }
-    if (!requestHeaders['X-Trace-Id'] && !requestHeaders['x-trace-id']) {
-        requestHeaders['X-Trace-Id'] = traceId
     }
 
     // 添加 Content-Length（如有 Body）
     if (body && !requestHeaders['Content-Length']) {
         requestHeaders['Content-Length'] = Buffer.byteLength(body)
     }
+    console.log(`[RequestHandler] 最终请求头:`, requestHeaders)
     // 构建请求选项
     const options: http.RequestOptions = {
         method: method || 'GET',
@@ -88,6 +89,8 @@ async function performRequest(params: IpcRequest): Promise<IpcResponse> {
         path: parsedUrl.pathname + parsedUrl.search,
         headers: requestHeaders,
         timeout: timeout,
+        agent: false,
+
         // 开发环境忽略证书错误（按需）
         // rejectUnauthorized: process.env.NODE_ENV !== 'development',
     }
@@ -101,7 +104,7 @@ async function performRequest(params: IpcRequest): Promise<IpcResponse> {
         // 假设存储的是 Bearer Token
         options.headers = options.headers || {}
         options.headers['Authorization'] = `Bearer ${storedToken}`
-        console.log(`[RequestHandler] 为域名 ${domain} 注入 Authorization 头`)
+        console.log(`[RequestHandler] inject Authorization head into ${domain}  `)
     }
 
     return new Promise((resolve, reject) => {
@@ -121,6 +124,7 @@ async function performRequest(params: IpcRequest): Promise<IpcResponse> {
                 } catch {
                     bodyString = `[Binary Data: ${responseBody.length} bytes]`
                 }
+                console.log(`[RequestHandler] 响应体预览 (前200字符): ${bodyString.substring(0, 200)}`)
 
                 // 转换响应头为普通对象
                 const responseHeaders: Record<string, string> = {}
@@ -231,5 +235,9 @@ export function registerRequestHandler() {
 
     ipcMain.handle('vault:deleteToken',  (_, domain: string) => {
          encryptedDB.deleteToken(domain)
+    })
+    ipcMain.handle('logs:fetchByTraceId', async (_, traceId: string) => {
+        console.log(`[主进程] 查询日志: TraceID=${traceId}`)
+        return await fetchLogsByTraceId(traceId)
     })
 }
