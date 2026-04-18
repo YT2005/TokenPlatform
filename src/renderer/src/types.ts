@@ -1,5 +1,6 @@
 // src/renderer/src/env.d.ts
 import {ipcRenderer} from "electron";
+import {DiagnosisContext, DiagnosisResult} from "../../main/services/llm-adapter";
 
 interface IpcRequest {
     url: string
@@ -41,6 +42,9 @@ declare global {
             getTokenDomains: () => Promise<string[]>
             deleteToken: (domain: string) => Promise<void>
             fetchLogs: (traceId: string) => Promise<LogEntry[]>
+            diagnose: (context: DiagnosisContext) => Promise<{ success: boolean; result?: DiagnosisResult; error?: string ;errorType?: string}>
+            saveLLMConfig: (config: { provider: string; apiKey?: string }) => Promise<void>
+            getLLMConfig: () => Promise<{ provider: string; hasApiKey: boolean }>
         }
     }
 }

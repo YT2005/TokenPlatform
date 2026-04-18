@@ -1,6 +1,7 @@
 // See the Electron documentation for details on how to use preload scripts:
 // https://www.electronjs.org/docs/latest/tutorial/process-model#preload-scripts
 import { contextBridge, ipcRenderer } from 'electron'
+import {DiagnosisContext} from "../main/services/llm-adapter";
 
 // 定义请求参数类型（供渲染进程使用）
 export interface IpcRequest {
@@ -43,6 +44,8 @@ contextBridge.exposeInMainWorld('api', {
         ipcRenderer.invoke('vault:getDomains'),
     deleteToken: (domain : string) =>
         ipcRenderer.invoke('vault:deleteToken', domain),
-    fetchLogs: (traceId: string) => ipcRenderer.invoke('logs:fetchByTraceId', traceId)
-
+    fetchLogs: (traceId: string) => ipcRenderer.invoke('logs:fetchByTraceId', traceId),
+    diagnose: (context: any) => ipcRenderer.invoke('ai:diagnose', context),
+    saveLLMConfig: (config: any) => ipcRenderer.invoke('settings:saveLLMConfig', config),
+    getLLMConfig: () => ipcRenderer.invoke('settings:getLLMConfig')
 })

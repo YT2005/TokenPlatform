@@ -66,6 +66,9 @@
         <el-tab-pane label="Auth" name="auth">
           <AuthPanel />
         </el-tab-pane>
+        <el-tab-pane label="设置" name="settings">
+          <Settings />
+        </el-tab-pane>
       </el-tabs>
     </main>
 
@@ -133,7 +136,78 @@
               </div>
             </div>
           </div>
-        </el-tab-pane>      </el-tabs>
+        </el-tab-pane>
+        <el-tab-pane label="AI 诊断" name="aiDiagnosis">
+          <div class="diagnosis-container" v-loading="diagnosing">
+            <!-- 错误提示区域 -->
+            <el-alert
+                v-if="diagnosisError"
+                :title="diagnosisError"
+                :type="errorAlertType"
+                :closable="false"
+                show-icon
+            >
+              <template #default>
+                <el-button
+                    type="primary"
+                    link
+                    @click="retryDiagnosis"
+                    :loading="diagnosing"
+                    style="margin-left: 8px"
+                >
+                  重试
+                </el-button>
+              </template>
+            </el-alert>
+            <!-- 诊断结果展示 -->
+            <div v-else-if="diagnosisResult">
+              <el-alert :title="diagnosisResult.summary" type="error" :closable="false" />
+              <div class="diagnosis-section">
+                <h4>根本原因</h4>
+                <p>{{ diagnosisResult.rootCause }}</p>
+              </div>
+              <div class="diagnosis-section" v-if="diagnosisResult.suggestions.length">
+                <h4>修复建议</h4>
+                <ul>
+                  <li v-for="(s, i) in diagnosisResult.suggestions" :key="i">{{ s }}</li>
+                </ul>
+              </div>
+              <div class="diagnosis-section" v-if="diagnosisResult.correctedExample">
+                <h4>
+                  修正示例
+                  <el-button type="success" size="small" @click="applyCorrection" style="margin-left: 12px">
+                    一键应用修复
+                  </el-button>
+                </h4>
+                <pre>{{ diagnosisResult.correctedExample }}</pre>
+              </div>
+            </div>
+            <!-- 空状态 -->
+            <div v-else-if="!diagnosisResult && !diagnosing" class="diagnosis-placeholder">
+              当请求返回 4xx/5xx 状态码时，点击下方按钮进行 AI 诊断
+            </div>
+
+            <!-- 操作按钮 -->
+            <div class="diagnosis-actions">
+              <el-button
+                  type="primary"
+                  :disabled="!lastErrorResponse"
+                  :loading="diagnosing"
+                  @click="runDiagnosis"
+              >
+                {{ diagnosing ? '诊断中...' : '开始诊断' }}
+              </el-button>
+              <el-button
+                  v-if="diagnosisResult || diagnosisError"
+                  @click="retryDiagnosis"
+              >
+                重新诊断
+              </el-button>
+            </div>
+          </div>
+
+        </el-tab-pane>
+      </el-tabs>
     </aside>
   </div>
 </template>
@@ -148,6 +222,10 @@ import BodyEditor from './components/BodyEditor.vue'
 import AuthPanel from './components/AuthPanel.vue'
 import {ElMessage} from "element-plus";
 import { CopyDocument, DataAnalysis } from '@element-plus/icons-vue'
+import Settings from "./components/Settings.vue";
+import {DiagnosisContext, DiagnosisResult} from "../../main/services/llm-adapter";
+import {IpcResponse} from "../../preload/preload";
+import {parseCurl} from "./utils/curl-parser";
 
 
 
@@ -255,14 +333,23 @@ const copyTraceId = async () => {
 }
 const openInGrafana = () => {
   if (!lastTraceId.value) return
-  const query = encodeURIComponent(`{container="mock-backend"} |= \`${lastTraceId.value}\``)
-  const url = `http://localhost:3001/explore?orgId=1&left=${JSON.stringify({
-    datasource: 'Loki',
+  const query = `{job="docker_containers"} |= \`${lastTraceId.value}\``
+  const leftParam = encodeURIComponent(
+      JSON.stringify({
+        datasource: 'Loki',
+        queries: [{ refId: 'A', expr: query }],
+        range: { from: 'now-1h', to: 'now' }
+      })
+  );
 
-    range: { from: 'now-1h', to: 'now' }
-  })}`
+  const url = `http://localhost:3001/explore?orgId=1&left=${leftParam}`;
   window.open(url, '_blank')
 }
+
+const diagnosing = ref(false)
+const diagnosisResult = ref<DiagnosisResult | null>(null)
+const lastErrorResponse = ref<IpcResponse | null>(null)
+const lastRequestParams = ref<any>(null)
 const sendRequest = async () => {
   // 重置响应显示
   statusCode.value = null
@@ -298,7 +385,13 @@ const sendRequest = async () => {
       headers: requestHeaders,
       body: requestBody,
     })
-
+    if (response.status >= 400) {
+      lastErrorResponse.value = response
+      lastRequestParams.value = { url, method, headers: requestHeaders, body: requestBody }
+    } else {
+      lastErrorResponse.value = null
+      diagnosisResult.value = null
+    }
     //5. 更新 UI
     statusCode.value = response.status
     responseTime.value = response.time
@@ -314,12 +407,104 @@ const sendRequest = async () => {
     console.log('TraceID:', response.traceId)
     // 自动拉取日志
     if (lastTraceId.value) {
-       fetchLogsForCurrentRequest()
+       await fetchLogsForCurrentRequest()
     }
 
   } catch (error: any) {
     statusCode.value = 0
     responseBody.value = `请求出错: ${error.message}`
+  }
+}
+
+const diagnosisError = ref<string | null>(null)
+const errorAlertType = ref<'error' | 'warning' | 'info'>('error')
+// 重试诊断
+const retryDiagnosis = async () => {
+  diagnosisError.value = null
+  await runDiagnosis()
+}
+// 执行诊断
+const runDiagnosis = async () => {
+  if (!lastErrorResponse.value) return
+  diagnosing.value = true
+  diagnosisError.value = null
+  diagnosisResult.value = null
+  try {
+    // 构建诊断上下文
+    const context: DiagnosisContext = {
+      request: {
+        url: lastRequestParams.value.url,
+        method: lastRequestParams.value.method,
+        headers: { ...lastRequestParams.value.headers },
+        body: lastRequestParams.value.body
+      },
+      response: {
+        status: lastErrorResponse.value.status,
+        statusText: lastErrorResponse.value.statusText,
+        headers: { ...lastErrorResponse.value.headers },
+        body: lastErrorResponse.value.body,
+        time: lastErrorResponse.value.time
+      },
+      logs: logEntries.value.map(l => l.line) // 关联已拉取的日志
+    }
+
+    console.log('准备调用 diagnose, 上下文:', context)
+    const res = await window.api.diagnose(context)
+    if (res.success) {
+      diagnosisResult.value = res.result
+    } else {
+      diagnosisError.value = res.error || '诊断失败'
+      // 根据错误类型设置提示风格
+      if (res.errorType === 'network') {
+        errorAlertType.value = 'warning'
+      } else if (res.errorType === 'invalid_key') {
+        errorAlertType.value = 'error'
+      } else {
+        errorAlertType.value = 'info'
+      }
+    }
+  } catch (e: any) {
+    diagnosisError.value = e.message || '请求异常'
+    errorAlertType.value = 'warning'
+  } finally {
+    diagnosing.value = false
+  }
+}
+
+// 一键应用修复
+const applyCorrection = () => {
+  if (!diagnosisResult.value?.correctedExample) return
+
+  const example = diagnosisResult.value.correctedExample
+  // 尝试解析修正示例：可能是 cURL 命令或 JSON body
+  if (example.trim().startsWith('curl')) {
+    // 调用 cURL 解析器
+    const parsed = parseCurl(example)
+    if (parsed) {
+      method.value = parsed.method
+      url.value = parsed.url
+      // 将 headers 转换为 KeyValueTable 格式
+      headers.value = Object.entries(parsed.headers).map(([k, v]) => ({ key: k, value: v }))
+      if (parsed.body) body.value = parsed.body
+      ElMessage.success('cURL 已解析并填充')
+    } else {
+      ElMessage.warning('无法解析 cURL，请手动复制')
+    }
+  } else {
+    // 假设是 JSON body
+    try {
+      const parsed = JSON.parse(example)
+      body.value = JSON.stringify(parsed, null, 2)
+      // 如果 Content-Type 未设置，自动设为 JSON
+      if (!headers.value.some(h => h.key.toLowerCase() === 'content-type')) {
+        headers.value.push({ key: 'Content-Type', value: 'application/json' })
+      }
+      ElMessage.success('请求体已填充')
+    } catch {
+      // 不是 JSON，可能是纯文本，直接放入 body
+      body.value = example
+      ElMessage.success('内容已填充到 Body')
+    }
   }
 }
 const login = async () => {

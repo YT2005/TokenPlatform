@@ -5,6 +5,8 @@ import { URL } from 'url'
 import { encryptedDB } from "./database/encrypted-db";
 import { fetchLogsByTraceId } from './services/log-services'
 import crypto from 'crypto';
+import {createLLMAdapter} from "./services/llm-factory";
+import {DiagnosisContext} from "./services/llm-adapter";
 // 请求参数接口
 interface IpcRequest {
     url: string
@@ -24,19 +26,7 @@ interface IpcResponse {
     traceId?: string
 }
 
-// 保存请求记录到数据库接口
 
-// interface RequestRecord {
-//     traceId: string
-//     url: string
-//     method: string
-//     requestHeaders: Record<string, string>
-//     requestBody?: string
-//     responseStatus: number
-//     responseHeaders: Record<string, string>
-//     responseBody: string
-//     createdAt: number
-// }
 
 /**
  * 发起 HTTP/HTTPS 请求
@@ -239,5 +229,51 @@ export function registerRequestHandler() {
     ipcMain.handle('logs:fetchByTraceId', async (_, traceId: string) => {
         console.log(`[主进程] 查询日志: TraceID=${traceId}`)
         return await fetchLogsByTraceId(traceId)
+    })
+
+    ipcMain.handle('ai:diagnose', async (_, context: DiagnosisContext) => {
+        console.log('[AI] 开始诊断，状态码:', context.response.status)
+        try {
+            const adapter = await createLLMAdapter()
+            console.log('[AI] 使用适配器:', adapter.name)
+            const result = await adapter.analyzeError(context)
+            return { success: true, result }
+        } catch (error: any) {
+            console.error('[AI] 诊断失败:', error)
+            return {
+                success: false,
+                error: error.message || '未知错误',
+                errorType: error.type || 'unknown'
+            }
+        }
+    })
+    // 保存 LLM 配置
+    ipcMain.handle('settings:saveLLMConfig', (_, config: {
+        provider: string;
+        apiKey?: string
+        keyType?: 'deepseek' | 'zhipu'
+    }) => {
+        encryptedDB.saveSetting('llm.provider', config.provider)
+        if (config.apiKey && config.keyType) {
+            const keyMap: Record<string, string> = {
+                deepseek: 'llm.deepseek.apiKey',
+                zhipu: 'llm.zhipu.apiKey'
+            }
+            const dbKey = keyMap[config.keyType]
+            if (dbKey) {
+                encryptedDB.saveSetting(dbKey, config.apiKey, true)
+            }
+        }
+    })
+    // 获取 LLM 配置
+    ipcMain.handle('settings:getLLMConfig', () => {
+        const provider = encryptedDB.getSetting('llm.provider') || 'rule'
+        let hasApiKey = false
+        if (provider === 'deepseek') {
+            hasApiKey = !!encryptedDB.getSetting('llm.deepseek.apiKey')
+        } else if (provider === 'zhipu') {
+            hasApiKey = !!encryptedDB.getSetting('llm.zhipu.apiKey')
+        }
+        return { provider, hasApiKey }
     })
 }

@@ -54,6 +54,13 @@ class EncryptedDB {
              response_time INTEGER,
              created_at INTEGER DEFAULT (strftime('%s','now'))
           );
+
+          CREATE TABLE IF NOT EXISTS settings (
+             key TEXT PRIMARY KEY,
+             value TEXT NOT NULL,
+             encrypted INTEGER DEFAULT 0,
+             updated_at INTEGER DEFAULT (strftime('%s','now'))
+              );
         `)
 
         console.log('[EncryptedDB] 数据库初始化成功')
@@ -147,6 +154,25 @@ class EncryptedDB {
             SELECT * FROM requests ORDER BY created_at DESC LIMIT ?
         `)
         return stmt.all(limit)
+    }
+
+    // 保存设置（可选择加密）
+    saveSetting(key: string, value: string, shouldEncrypt: boolean = false): void {
+        if (!this.db) throw new Error('数据库未初始化')
+        const finalValue = shouldEncrypt ? this.encrypt(value) : value
+        const stmt = this.db.prepare(`
+    INSERT OR REPLACE INTO settings (key, value, encrypted) VALUES (?, ?, ?)
+  `)
+        stmt.run(key, finalValue, shouldEncrypt ? 1 : 0)
+    }
+
+    // 获取设置（自动解密）
+    getSetting(key: string): string | null {
+        if (!this.db) throw new Error('数据库未初始化')
+        const stmt = this.db.prepare(`SELECT value, encrypted FROM settings WHERE key = ?`)
+        const row = stmt.get(key) as { value: string; encrypted: number } | undefined
+        if (!row) return null
+        return row.encrypted ? this.decrypt(row.value) : row.value
     }
 
 
