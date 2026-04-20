@@ -47,5 +47,12 @@ contextBridge.exposeInMainWorld('api', {
     fetchLogs: (traceId: string) => ipcRenderer.invoke('logs:fetchByTraceId', traceId),
     diagnose: (context: any) => ipcRenderer.invoke('ai:diagnose', context),
     saveLLMConfig: (config: any) => ipcRenderer.invoke('settings:saveLLMConfig', config),
-    getLLMConfig: () => ipcRenderer.invoke('settings:getLLMConfig')
+    getLLMConfig: () => ipcRenderer.invoke('settings:getLLMConfig'),
+    getRequestHistory: (limit?: number) => ipcRenderer.invoke('history:getList', limit),
+    deleteHistoryRecords: (ids: number[]) => ipcRenderer.invoke('history:deleteRecords', ids),
+    getRequestDetail: (id: number) => ipcRenderer.invoke('history:getDetail', id),
+    triggerSync: () => ipcRenderer.invoke('sync:trigger'),
+    getUnsyncedCount: () => ipcRenderer.invoke('sync:getUnsyncedCount'),
+    onSyncCompleted: (callback: () => void) => ipcRenderer.on('sync:completed', callback),
+    removeSyncListener: () => ipcRenderer.removeAllListeners('sync:completed')
 })

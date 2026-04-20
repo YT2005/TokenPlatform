@@ -52,6 +52,7 @@ class EncryptedDB {
              response_headers TEXT,
              response_body TEXT,
              response_time INTEGER,
+             sync_status INTEGER DEFAULT 0,   -- 0: 未同步, 1: 已同步 
              created_at INTEGER DEFAULT (strftime('%s','now'))
           );
 
@@ -62,11 +63,21 @@ class EncryptedDB {
              updated_at INTEGER DEFAULT (strftime('%s','now'))
               );
         `)
+        // 字段迁移：确保旧表有 sync_status 列
+        try {
+            const tableInfo = this.db.prepare(`PRAGMA table_info(requests)`).all() as any[]
+            if (!tableInfo.some(col => col.name === 'sync_status')) {
+                this.db.exec(`ALTER TABLE requests ADD COLUMN sync_status INTEGER DEFAULT 0`)
+            }
+        } catch (e) {
+            // 忽略迁移错误
+        }
 
-        console.log('[EncryptedDB] 数据库初始化成功')
+        console.log('[EncryptedDB] Database initialization successful')
 
     }
 
+    // ========== 加密相关 ==========
     private encrypt(plaintext: string): string {
         const iv = crypto.randomBytes(12)
         const cipher = crypto.createCipheriv('aes-256-gcm', this.encryptionKey, iv)
@@ -91,7 +102,7 @@ class EncryptedDB {
             return null
         }
     }
-
+    // ========== Token 管理 ==========
     saveToken(domain: string, plaintext: string): void {
         if (!this.db) throw new Error('数据库未初始化')
         const encrypted = this.encrypt(plaintext)
@@ -127,6 +138,7 @@ class EncryptedDB {
 
     }
 
+    // ========== 请求记录 ==========
     saveRequestRecord(record: RequestRecord): void {
         if (!this.db) throw new Error('数据库未初始化');
         const stmt =this.db.prepare(`
@@ -147,7 +159,8 @@ class EncryptedDB {
             record.createdAt
         );
     }
-    getRequestHistory(limit: number = 50): any[] {
+
+    getRequestHistory(limit?: number): any[] {
         if (!this.db) throw new Error('数据库未初始化')
 
         const stmt = this.db.prepare(`
@@ -155,7 +168,42 @@ class EncryptedDB {
         `)
         return stmt.all(limit)
     }
+    getRequestById(id: number): any {
+        if (!this.db) throw new Error('数据库未初始化')
 
+        const stmt = this.db!.prepare(`SELECT * FROM requests WHERE id = ?`)
+        return stmt.get(id)
+    }
+    deleteRequestRecords(ids: number[]): void {
+        if (!this.db || ids.length === 0) return
+        const placeholders = ids.map(() => '?').join(',')
+        this.db.prepare(`DELETE FROM requests WHERE id IN (${placeholders})`).run(...ids)
+    }
+
+    // ========== 同步相关 ==========
+    getUnsyncedRequests(limit?: number): any[] {
+        if (!this.db) throw new Error('数据库未初始化')
+        const stmt = this.db.prepare(`
+            SELECT * FROM requests WHERE sync_status = 0 ORDER BY created_at ASC LIMIT ?
+        `)
+        return stmt.all(limit)
+    }
+    // 标记记录为已同步
+    markAsSynced(ids: number[]): void {
+        if (!this.db || ids.length === 0) return
+        const placeholders = ids.map(() => '?').join(',')
+        const stmt = this.db.prepare(`
+    UPDATE requests SET sync_status = 1 WHERE id IN (${placeholders})
+  `)
+        stmt.run(...ids)
+    }
+    getUnsyncedCount(): number {
+        if (!this.db) return 0
+        const row = this.db.prepare(`SELECT COUNT(*) as cnt FROM requests WHERE sync_status = 0`).get() as { cnt: number }
+        return row.cnt
+    }
+
+    // ========== 设置管理 ==========
     // 保存设置（可选择加密）
     saveSetting(key: string, value: string, shouldEncrypt: boolean = false): void {
         if (!this.db) throw new Error('数据库未初始化')
@@ -174,6 +222,7 @@ class EncryptedDB {
         if (!row) return null
         return row.encrypted ? this.decrypt(row.value) : row.value
     }
+
 
 
     close(): void {

@@ -45,6 +45,13 @@ declare global {
             diagnose: (context: DiagnosisContext) => Promise<{ success: boolean; result?: DiagnosisResult; error?: string ;errorType?: string}>
             saveLLMConfig: (config: { provider: string; apiKey?: string }) => Promise<void>
             getLLMConfig: () => Promise<{ provider: string; hasApiKey: boolean }>
+            getRequestHistory: (limit?: number) => Promise<any[]>
+            deleteHistoryRecords: (ids: number[]) => Promise<void>
+            getRequestDetail: (id: number) => Promise<any>
+            triggerSync: () => Promise<void>
+            getUnsyncedCount: () => Promise<number>
+            onSyncCompleted: (callback: () => void) => void
+            removeSyncListener: () => void
         }
     }
 }

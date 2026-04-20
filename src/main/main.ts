@@ -1,3 +1,5 @@
+import {initSyncService, registerSyncHandlers, stopSyncService} from "./services/sync-service";
+
 process.env.HTTP_PROXY = ''
 process.env.HTTPS_PROXY = ''
 process.env.NO_PROXY = 'localhost,127.0.0.1'
@@ -76,8 +78,15 @@ app.whenReady().then(() => {
     //注册 IPC 请求处理器
     registerRequestHandler()
     registerSSOHandlers()
+    registerSyncHandlers()
+    initSyncService()
     createWindow()
     // ...
+})
+
+app.on('will-quit', () => {
+    stopSyncService()
+    encryptedDB.close()
 })
 
 // In this file you can include the rest of your app's specific main process

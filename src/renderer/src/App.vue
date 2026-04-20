@@ -1,7 +1,8 @@
 <template>
   <div class="app-container">
-    <!-- 顶部状态栏 -->
-    <div class="top-bar">
+    <!-- 左侧边栏-->
+    <aside class="sidebar">
+      <!-- 用户信息 -->
       <div v-if="currentUser" class="user-info">
         <el-avatar :size="28">{{ currentUser.name.charAt(0) }}</el-avatar>
         <el-dropdown @command="handleUserCommand">
@@ -15,22 +16,122 @@
         </el-dropdown>
       </div>
       <el-button v-else @click="login">登录</el-button>
-    </div>
-    <!-- 左侧边栏：应用/环境/历史 -->
-    <aside class="sidebar">
-      <div class="sidebar-header">
-        <el-input placeholder="搜索接口..." prefix-icon="Search" size="small" />
-      </div>
-      <el-tree
-          :data="treeData"
-          :props="{ label: 'name', children: 'children' }"
-          node-key="id"
-          default-expand-all
-          highlight-current
-          @node-click="handleNodeClick"
-      />
-      <div class="sidebar-footer">
-        <el-button type="primary" link>+ 新建请求</el-button>
+
+      <!-- 请求历史区域 -->
+      <div class="history-section">
+        <div class="history-header">
+          <span>请求历史</span>
+          <div class="history-actions">
+            <!-- 同步指示器 -->
+            <div class="sync-indicator" @click="triggerManualSync">
+              <el-tooltip :content="syncTooltip" placement="bottom">
+                <el-badge :value="unsyncedCount" :hidden="unsyncedCount === 0" :max="99">
+                  <el-icon :size="20" :class="{ 'syncing': isSyncing }">
+                    <Cloudy v-if="!isOnline" />
+                    <PartlyCloudy v-else-if="unsyncedCount > 0" />
+                    <Sunny v-else />
+                  </el-icon>
+                </el-badge>
+              </el-tooltip>
+            </div>
+            <el-button link @click="refreshHistory" title="刷新">
+              <el-icon><Refresh /></el-icon>
+            </el-button>
+            <el-button
+                v-if="!isBatchDeleteMode"
+                link
+                @click="enterBatchDeleteMode"
+                title="批量删除"
+            >
+              <el-icon><Delete /></el-icon>
+            </el-button>
+            <template v-else>
+              <el-button link @click="cancelBatchDelete" title="取消">
+                <el-icon><Close /></el-icon>
+              </el-button>
+              <el-button
+                  link
+                  :disabled="selectedHistoryIds.size === 0"
+                  @click="batchDeleteSelected"
+                  title="确认删除"
+              >
+                <el-icon><Check /></el-icon>
+              </el-button>
+            </template>
+
+          </div>
+        </div>
+        <!-- 搜索与过滤 -->
+        <div class="history-filters">
+          <el-input
+              v-model="historySearchKeyword"
+              placeholder="搜索 URL / 方法 / 状态码"
+              size="small"
+              clearable
+              @input="applyHistoryFilters"
+          >
+            <template #prefix>
+              <el-icon><Search /></el-icon>
+            </template>
+          </el-input>
+          <el-select
+              v-model="historyStatusFilter"
+              size="small"
+              placeholder="状态"
+              style="width: 90px; margin-left: 8px"
+              @change="applyHistoryFilters"
+          >
+            <el-option label="全部" value="all" />
+            <el-option label="2xx" value="2xx" />
+            <el-option label="4xx" value="4xx" />
+            <el-option label="5xx" value="5xx" />
+          </el-select>
+        </div>
+
+        <!-- 历史列表 -->
+        <div class="history-list">
+          <div
+              v-for="item in filteredHistoryList"
+              :key="item.id"
+              class="history-item"
+              :class="{ 'batch-mode': isBatchDeleteMode }"
+          >
+            <el-checkbox
+                v-if="isBatchDeleteMode"
+                v-model="item.selected"
+                size="small"
+                @change="updateSelectedSet(item.id, item.selected)"
+                @click.stop
+            />
+            <div
+                class="history-item-main"
+                @click="!isBatchDeleteMode && loadHistoryItem(item)"
+            >
+              <div class="history-method" :class="`method-${item.method.toLowerCase()}`">
+                {{ item.method }}
+              </div>
+              <div class="history-url">{{ truncateUrl(item.url) }}</div>
+              <div class="history-status" :class="`status-${Math.floor(item.response_status / 100)}`">
+                {{ item.response_status }}
+              </div>
+              <el-icon v-if="item.sync_status === 1" class="synced-icon"><Check /></el-icon>
+              <el-icon v-else class="unsynced-icon"><Clock /></el-icon>
+            </div>
+            <el-button
+                v-if="!isBatchDeleteMode"
+                link
+                class="delete-single-btn"
+                @click.stop="deleteSingleHistory(item.id)"
+                title="删除本地记录"
+            >
+              <el-icon><Delete /></el-icon>
+            </el-button>
+          </div>
+          <div v-if="filteredHistoryList.length === 0" class="history-empty">
+            暂无历史记录
+          </div>
+        </div>
+
       </div>
     </aside>
 
@@ -214,14 +315,14 @@
 
 <script setup lang="ts">
 
-import { ref, computed, onMounted } from 'vue'
+import {ref, computed, onMounted, onUnmounted, watch} from 'vue'
 
 import ParamsTable from './components/ParamsTable.vue'
 import KeyValueTable from './components/KeyValueTable.vue'
 import BodyEditor from './components/BodyEditor.vue'
 import AuthPanel from './components/AuthPanel.vue'
-import {ElMessage} from "element-plus";
-import { CopyDocument, DataAnalysis } from '@element-plus/icons-vue'
+import {ElMessage, ElBadge, ElMessageBox} from "element-plus";
+import { CopyDocument, DataAnalysis,  Cloudy, PartlyCloudy, Sunny, Refresh,Check, Clock,Delete, Close, Search  } from '@element-plus/icons-vue'
 import Settings from "./components/Settings.vue";
 import {DiagnosisContext, DiagnosisResult} from "../../main/services/llm-adapter";
 import {IpcResponse} from "../../preload/preload";
@@ -229,24 +330,6 @@ import {parseCurl} from "./utils/curl-parser";
 
 
 
-// 左侧树数据（模拟）
-const treeData = ref([
-  {
-    id: 1,
-    name: '用户服务',
-    children: [
-      { id: 11, name: 'GET /users' },
-      { id: 12, name: 'POST /users' },
-    ]
-  },
-  {
-    id: 2,
-    name: '订单服务',
-    children: [
-      { id: 21, name: 'GET /orders' },
-    ]
-  }
-])
 
 // 请求相关状态
 const method = ref('GET')
@@ -271,10 +354,7 @@ const statusType = computed(() => {
   if (!statusCode.value) return ''
   return statusCode.value >= 200 && statusCode.value < 300 ? 'success' : 'danger'
 })
-onMounted(async () => {
-  console.log('window.api:', window.api)
-  currentUser.value = await window.api.getCurrentUser()
-})
+
 
 // 事件处理
 const handleNodeClick = (data: any) => {
@@ -285,16 +365,141 @@ const handleNodeClick = (data: any) => {
   }
 }
 
-// 响应式数据
+// 原始历史数据（从数据库加载）
+const historyList = ref<any[]>([])
+// 过滤后的数据（展示用）
+const filteredHistoryList = ref<any[]>([])
+// 过滤条件
+const historySearchKeyword = ref('')
+const historyStatusFilter = ref('all')
+// 批量删除模式
+const isBatchDeleteMode = ref(false)
+const selectedHistoryIds = ref<Set<number>>(new Set())
+// 过滤函数（前端筛选）
+const applyHistoryFilters = () => {
+  let result = [...historyList.value]
+  const keyword = historySearchKeyword.value.trim().toLowerCase()
+
+  // 关键词过滤
+  if (keyword) {
+    result = result.filter(item =>
+        item.method.toLowerCase().includes(keyword) ||
+        item.url.toLowerCase().includes(keyword) ||
+        String(item.response_status).includes(keyword)
+    )
+  }
+
+  // 状态码过滤
+  if (historyStatusFilter.value !== 'all') {
+    const prefix = parseInt(historyStatusFilter.value.charAt(0))
+    result = result.filter(item => Math.floor(item.response_status / 100) === prefix)
+  }
+
+  filteredHistoryList.value = result
+}
+
+// 刷新历史（从数据库拉取并重置过滤）
+const refreshHistory = async () => {
+  if (window.api.getRequestHistory) {
+    const rawData = await window.api.getRequestHistory(100) // 可适当增加限制
+    // 为每条记录添加 selected 字段（仅用于批量删除）
+    historyList.value = rawData.map(item => ({ ...item, selected: false }))
+    applyHistoryFilters()
+  }
+}
+// 监听原始数据变化时重新过滤
+watch(historyList, () => applyHistoryFilters(), { deep: true })
+// 进入批量删除模式
+const enterBatchDeleteMode = () => {
+  isBatchDeleteMode.value = true
+  // 重置所有选中状态
+  historyList.value.forEach(item => item.selected = false)
+  selectedHistoryIds.value.clear()
+}
+
+// 取消批量删除
+const cancelBatchDelete = () => {
+  isBatchDeleteMode.value = false
+  historyList.value.forEach(item => item.selected = false)
+  selectedHistoryIds.value.clear()
+}
+
+// 更新选中 ID 集合（复选框 change 事件）
+const updateSelectedSet = (id: number, selected: boolean) => {
+  if (selected) {
+    selectedHistoryIds.value.add(id)
+  } else {
+    selectedHistoryIds.value.delete(id)
+  }
+}
+
+// 批量删除选中记录（仅本地）
+const batchDeleteSelected = async () => {
+  if (selectedHistoryIds.value.size === 0) {
+    ElMessage.warning('请至少选择一条记录')
+    return
+  }
+
+  try {
+    // 调用主进程删除接口（需新增）
+    const ids = Array.from(selectedHistoryIds.value)
+    await window.api.deleteHistoryRecords(ids)
+
+    // 从本地列表中移除
+    historyList.value = historyList.value.filter(item => !ids.includes(item.id))
+    applyHistoryFilters()
+    cancelBatchDelete()
+    ElMessage.success(`已删除 ${ids.length} 条本地记录`)
+  } catch (e) {
+    ElMessage.error('删除失败')
+  }
+}
+// 单条删除
+const deleteSingleHistory = async (id: number) => {
+  try {
+    await ElMessageBox.confirm('确定要删除该条本地记录吗？', '提示', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      type: 'warning'
+    })
+    await window.api.deleteHistoryRecords([id])
+    historyList.value = historyList.value.filter(item => item.id !== id)
+    applyHistoryFilters()
+    ElMessage.success('已删除')
+  } catch {
+    // 取消操作
+  }
+}
+
+const truncateUrl = (url: string, maxLen = 30) => {
+  return url.length > maxLen ? url.substring(0, maxLen) + '…' : url
+}
+
+const loadHistoryItem = async (item: any) => {
+  if (isBatchDeleteMode.value) return
+  const detail = await window.api.getRequestDetail(item.id)
+  method.value = detail.method
+  url.value = detail.url
+  // 解析 headers
+  try {
+    const h = JSON.parse(detail.request_headers || '{}')
+    headers.value = Object.entries(h).map(([k, v]) => ({ key: k, value: v as string }))
+  } catch { /* ignore */ }
+  body.value = detail.request_body || ''
+  activeTab.value = 'body' // 可选
+  ElMessage.success('已加载历史请求')
+}// 响应式数据
+
 const logsLoading = ref(false)
 const logEntries = ref<Array<{ timestamp: string; line: string; level?: string }>>([])
 const lastTraceId = ref<string | null>(null)
 
-// 格式化时间
+
 const formatTime = (iso: string) => {
   const date = new Date(iso)
   return date.toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 })
 }
+
 // 获取当前请求的日志
 const fetchLogsForCurrentRequest = async () => {
   if (!lastTraceId.value) return
@@ -308,6 +513,7 @@ const fetchLogsForCurrentRequest = async () => {
     logsLoading.value = false
   }
 }
+
 // 格式化 TraceID 显示（前8后6，中间省略）
 const formatTraceId = (traceId: string) => {
   if (traceId.length <= 20) return traceId
@@ -331,6 +537,7 @@ const copyTraceId = async () => {
     ElMessage.success('TraceID 已复制')
   }
 }
+
 const openInGrafana = () => {
   if (!lastTraceId.value) return
   const query = `{job="docker_containers"} |= \`${lastTraceId.value}\``
@@ -393,6 +600,8 @@ const sendRequest = async () => {
       diagnosisResult.value = null
     }
     //5. 更新 UI
+    await refreshHistory()
+    await refreshUnsyncedCount()
     statusCode.value = response.status
     responseTime.value = response.time
     responseBody.value = response.body
@@ -407,7 +616,7 @@ const sendRequest = async () => {
     console.log('TraceID:', response.traceId)
     // 自动拉取日志
     if (lastTraceId.value) {
-       await fetchLogsForCurrentRequest()
+      await fetchLogsForCurrentRequest()
     }
 
   } catch (error: any) {
@@ -516,6 +725,50 @@ const login = async () => {
     ElMessage.error(`登录失败: ${e.message || '未知错误'}`)
   }
 }
+
+const isOnline = ref(navigator.onLine)
+const unsyncedCount = ref(0)
+const isSyncing = ref(false)
+
+const syncTooltip = computed(() => {
+  if (!isOnline.value) return '离线'
+  if (unsyncedCount.value > 0) return `${unsyncedCount.value} 条待同步`
+  return '已同步'
+})
+
+// 更新未同步计数
+const refreshUnsyncedCount = async () => {
+  if (window.api.getUnsyncedCount) {
+    unsyncedCount.value = await window.api.getUnsyncedCount()
+  }
+}
+
+// 手动触发同步
+const triggerManualSync = async () => {
+  if (!isOnline.value) {
+    ElMessage.warning('当前离线，无法同步')
+    return
+  }
+  isSyncing.value = true
+  await window.api.triggerSync()
+  isSyncing.value = false
+  await refreshUnsyncedCount()
+}
+
+// 监听网络事件
+window.addEventListener('online', () => isOnline.value = true)
+window.addEventListener('offline', () => isOnline.value = false)
+
+// 监听主进程同步完成事件
+if (window.api.onSyncCompleted) {
+  window.api.onSyncCompleted(() => {
+    isSyncing.value = false
+    refreshUnsyncedCount()
+  })
+}
+
+
+
 const handleUserCommand = async (cmd: string) => {
   if (cmd === 'logout') {
     await window.api.logout()
@@ -527,7 +780,17 @@ const handleUserCommand = async (cmd: string) => {
   }
 }
 
+onMounted(async () => {
+  console.log('window.api:', window.api)
+  currentUser.value = await window.api.getCurrentUser()
+  await refreshUnsyncedCount()
+})
 
+onUnmounted(() => {
+  if (window.api.removeSyncListener) {
+    window.api.removeSyncListener()
+  }
+})
 </script>
 
 <style scoped>
@@ -540,7 +803,7 @@ const handleUserCommand = async (cmd: string) => {
 }
 
 .sidebar {
-  width: 260px;
+  width: 25%;
   background-color: white;
   border-right: 1px solid #e4e7ed;
   display: flex;
@@ -548,9 +811,104 @@ const handleUserCommand = async (cmd: string) => {
   padding: 12px 0;
 }
 
-.sidebar-header {
-  padding: 0 12px 12px;
+.history-section {
+  margin-top: 16px;
+  border-top: 1px solid #e4e7ed;
+  padding: 12px 0;
 }
+
+.history-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 12px;
+  font-weight: 500;
+}
+
+.history-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.history-filters {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.history-list {
+  height: 13%;
+  overflow-y: auto;
+  padding: 0 8px;
+}
+
+.history-item {
+  position: relative;
+}
+
+.history-item.batch-mode {
+  padding-left: 4px;
+}
+
+.history-item-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  cursor: pointer;
+}
+
+.history-item:hover {
+  background-color: #f5f7fa;
+}
+
+.delete-single-btn {
+  opacity: 0;
+  transition: opacity 0.2s;
+  padding: 0 4px;
+}
+
+.history-item:hover .delete-single-btn {
+  opacity: 1;
+}
+
+.history-method {
+  min-width: 45px;
+  font-weight: 600;
+}
+
+.history-empty {
+  text-align: center;
+  color: #909399;
+  padding: 20px 0;
+  font-size: 13px;
+}
+
+.method-get { color: #67c23a; }
+.method-post { color: #409eff; }
+.method-put { color: #e6a23c; }
+.method-delete { color: #f56c6c; }
+
+.history-url {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-status {
+  min-width: 35px;
+  text-align: right;
+}
+
+.status-2 { color: #67c23a; }
+.status-4 { color: #f56c6c; }
+.status-5 { color: #e6a23c; }
+.synced-icon { color: #67c23a; }
+
+.unsynced-icon { color: #909399; }
 
 .sidebar-footer {
   margin-top: auto;
@@ -558,10 +916,26 @@ const handleUserCommand = async (cmd: string) => {
   border-top: 1px solid #e4e7ed;
 }
 
+.sync-indicator {
+  margin-left: auto;
+  margin-right: 16px;
+  cursor: pointer;
+}
+
+.syncing {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 .request-panel {
   flex: 1;
   display: flex;
   flex-direction: column;
+  width: 45%;
   padding: 16px;
   min-width: 0;
 }
@@ -585,7 +959,7 @@ const handleUserCommand = async (cmd: string) => {
 }
 
 .response-panel {
-  width: 420px;
+  width: 30%;
   background-color: white;
   border-left: 1px solid #e4e7ed;
   display: flex;
@@ -605,22 +979,19 @@ const handleUserCommand = async (cmd: string) => {
   flex: 1;
 }
 
-.logs-placeholder {
-  color: #909399;
-  text-align: center;
-  padding: 40px 0;
-}
 .logs-container {
   display: flex;
   flex-direction: column;
   height: 100%;
 }
+
 .logs-toolbar {
   display: flex;
   align-items: center;
   gap: 12px;
   margin-bottom: 8px;
 }
+
 .logs-toolbar {
   display: flex;
   align-items: center;
@@ -650,11 +1021,7 @@ const handleUserCommand = async (cmd: string) => {
   border: none;
   padding: 0;
 }
-.trace-id {
-  font-family: monospace;
-  font-size: 12px;
-  color: #909399;
-}
+
 .logs-list {
   flex: 1;
   overflow-y: auto;
@@ -665,12 +1032,14 @@ const handleUserCommand = async (cmd: string) => {
   font-family: 'Consolas', 'Monaco', monospace;
   font-size: 12px;
 }
+
 .log-entry {
   padding: 2px 0;
   border-bottom: 1px solid #3c3c3c;
   white-space: pre-wrap;
   word-break: break-all;
 }
+
 .log-time {
   color: #858585;
   margin-right: 12px;
@@ -679,6 +1048,7 @@ const handleUserCommand = async (cmd: string) => {
 .log-warn { color: #dcdcaa; }
 .log-error { color: #f14c4c; }
 .log-debug { color: #ce9178; }
+
 .logs-empty {
   text-align: center;
   color: #858585;
