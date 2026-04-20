@@ -28,6 +28,16 @@ export interface UserInfo {
 }
 
 contextBridge.exposeInMainWorld('api', {
+    getEnvironments: () => ipcRenderer.invoke('env:getAll'),
+    createEnvironment: (name: string, desc?: string) => ipcRenderer.invoke('env:create', name, desc),
+    updateEnvironment: (id: number, name: string, desc?: string) => ipcRenderer.invoke('env:update', id, name, desc),
+    deleteEnvironment: (id: number) => ipcRenderer.invoke('env:delete', id),
+    setDefaultEnvironment: (id: number) => ipcRenderer.invoke('env:setDefault', id),
+    getEnvVariables: (envId: number) => ipcRenderer.invoke('env:getVariables', envId),
+    saveEnvVariable: (envId: number, key: string, value: string, encrypted: boolean) =>
+        ipcRenderer.invoke('env:saveVariable', envId, key, value, encrypted),
+    deleteEnvVariable: (envId: number, key: string) => ipcRenderer.invoke('env:deleteVariable', envId, key),
+
     // 发送 HTTP 请求
     sendRequest: (params: IpcRequest) : Promise<IpcResponse> =>
         ipcRenderer.invoke('http:request', params),

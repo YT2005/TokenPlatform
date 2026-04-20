@@ -42,26 +42,45 @@ class EncryptedDB {
           );
 
           CREATE TABLE IF NOT EXISTS requests (
-             id INTEGER PRIMARY KEY AUTOINCREMENT,
-             trace_id TEXT UNIQUE,
-             url TEXT NOT NULL,
-             method TEXT NOT NULL,
-             request_headers TEXT,
-             request_body TEXT,
-             response_status INTEGER,
-             response_headers TEXT,
-             response_body TEXT,
-             response_time INTEGER,
-             sync_status INTEGER DEFAULT 0,   -- 0: 未同步, 1: 已同步 
-             created_at INTEGER DEFAULT (strftime('%s','now'))
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trace_id TEXT UNIQUE,
+            url TEXT NOT NULL,
+            method TEXT NOT NULL,
+            request_headers TEXT,
+            request_body TEXT,
+            response_status INTEGER,
+            response_headers TEXT,
+            response_body TEXT,
+            response_time INTEGER,
+            sync_status INTEGER DEFAULT 0,   -- 0: 未同步, 1: 已同步 
+            created_at INTEGER DEFAULT (strftime('%s','now'))
           );
 
           CREATE TABLE IF NOT EXISTS settings (
-             key TEXT PRIMARY KEY,
-             value TEXT NOT NULL,
-             encrypted INTEGER DEFAULT 0,
-             updated_at INTEGER DEFAULT (strftime('%s','now'))
-              );
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            encrypted INTEGER DEFAULT 0,
+            updated_at INTEGER DEFAULT (strftime('%s','now'))
+          );
+          CREATE TABLE IF NOT EXISTS environments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            description TEXT,
+            is_default INTEGER DEFAULT 0,
+            created_at INTEGER DEFAULT (strftime('%s','now')),
+            updated_at INTEGER DEFAULT (strftime('%s','now'))
+          );
+
+          CREATE TABLE IF NOT EXISTS env_variables (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            env_id INTEGER NOT NULL,
+            key TEXT NOT NULL,
+            value TEXT NOT NULL,
+            encrypted INTEGER DEFAULT 0,
+            created_at INTEGER DEFAULT (strftime('%s','now')),
+            FOREIGN KEY (env_id) REFERENCES environments(id) ON DELETE CASCADE,
+            UNIQUE(env_id, key)
+          );
         `)
         // 字段迁移：确保旧表有 sync_status 列
         try {
@@ -72,9 +91,83 @@ class EncryptedDB {
         } catch (e) {
             // 忽略迁移错误
         }
+        // 初始化默认环境（如果表为空）
+        const envCount = this.db.prepare(`SELECT COUNT(*) as cnt FROM environments`).get() as { cnt: number }
+        if (envCount.cnt === 0) {
+            this.db.prepare(`INSERT INTO environments (name, description, is_default) VALUES (?, ?, ?)`)
+                .run('开发环境', '本地开发环境', 1)
+            const devEnvId = this.db.prepare(`SELECT last_insert_rowid() as id`).get() as { id: number }
+            // 添加默认变量示例
+            this.db.prepare(`INSERT INTO env_variables (env_id, key, value, encrypted) VALUES (?, ?, ?, ?)`)
+                .run(devEnvId.id, 'baseUrl', 'http://localhost:8080', 0)
+            this.db.prepare(`INSERT INTO env_variables (env_id, key, value, encrypted) VALUES (?, ?, ?, ?)`)
+                .run(devEnvId.id, 'apiKey', 'dev-api-key-123', 1) // 加密存储
+        }
 
         console.log('[EncryptedDB] Database initialization successful')
 
+    }
+
+    // ========== 环境管理 ==========
+    getAllEnvironments(): any[] {
+        const stmt = this.db!.prepare(`SELECT * FROM environments ORDER BY is_default DESC, name ASC`)
+        return stmt.all()
+    }
+
+    getEnvironmentById(id: number): any {
+        return this.db!.prepare(`SELECT * FROM environments WHERE id = ?`).get(id)
+    }
+
+    createEnvironment(name: string, description?: string): number {
+        const stmt = this.db!.prepare(`INSERT INTO environments (name, description) VALUES (?, ?)`)
+        const info = stmt.run(name, description || null)
+        return info.lastInsertRowid as number
+    }
+
+    updateEnvironment(id: number, name: string, description?: string): void {
+        this.db!.prepare(`UPDATE environments SET name = ?, description = ?, updated_at = strftime('%s','now') WHERE id = ?`)
+            .run(name, description || null, id)
+    }
+
+    deleteEnvironment(id: number): void {
+        // 外键级联会自动删除关联变量
+        this.db!.prepare(`DELETE FROM environments WHERE id = ?`).run(id)
+    }
+
+    setDefaultEnvironment(id: number): void {
+        this.db!.exec('BEGIN')
+        this.db!.prepare(`UPDATE environments SET is_default = 0`).run()
+        this.db!.prepare(`UPDATE environments SET is_default = 1 WHERE id = ?`).run(id)
+        this.db!.exec('COMMIT')
+    }
+
+    getVariablesForEnvironment(envId: number): any[] {
+        return this.db!.prepare(`SELECT * FROM env_variables WHERE env_id = ? ORDER BY key`).all(envId)
+    }
+
+    saveVariable(envId: number, key: string, value: string, shouldEncrypt: boolean = false): void {
+        const finalValue = shouldEncrypt ? this.encrypt(value) : value
+        this.db!.prepare(`
+    INSERT INTO env_variables (env_id, key, value, encrypted) VALUES (?, ?, ?, ?)
+    ON CONFLICT(env_id, key) DO UPDATE SET value = excluded.value, encrypted = excluded.encrypted
+  `).run(envId, key, finalValue, shouldEncrypt ? 1 : 0)
+    }
+
+    deleteVariable(envId: number, key: string): void {
+        this.db!.prepare(`DELETE FROM env_variables WHERE env_id = ? AND key = ?`).run(envId, key)
+    }
+
+    // 获取当前激活环境的变量（用于请求替换）
+    getActiveEnvironmentVariables(): Record<string, string> {
+        const env = this.db!.prepare(`SELECT id FROM environments WHERE is_default = 1`).get() as { id: number } | undefined
+        if (!env) return {}
+
+        const vars = this.db!.prepare(`SELECT key, value, encrypted FROM env_variables WHERE env_id = ?`).all(env.id) as any[]
+        const result: Record<string, string> = {}
+        for (const v of vars) {
+            result[v.key] = v.encrypted ? (this.decrypt(v.value) || '') : v.value
+        }
+        return result
     }
 
     // ========== 加密相关 ==========

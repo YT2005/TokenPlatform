@@ -34,6 +34,14 @@ interface LogEntry {
 declare global {
     interface Window {
         api: {
+            getEnvironments: () => Promise<any[]>
+            createEnvironment: (name: string, desc?: string) => Promise<number>
+            updateEnvironment: (id: number, name: string, desc?: string) => Promise<void>
+            deleteEnvironment: (id: number) => Promise<void>
+            setDefaultEnvironment: (id: number) => Promise<void>
+            getEnvVariables: (envId: number) => Promise<any[]>
+            saveEnvVariable: (envId: number, key: string, value: string, encrypted: boolean) => Promise<void>
+            deleteEnvVariable: (envId: number, key: string) => Promise<void>
             sendRequest: (params: IpcRequest) => Promise<IpcResponse>
             login: () => Promise<UserInfo>
             logout: () => Promise<void>

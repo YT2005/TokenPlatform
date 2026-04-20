@@ -7,6 +7,7 @@ import { fetchLogsByTraceId } from './services/log-services'
 import crypto from 'crypto';
 import {createLLMAdapter} from "./services/llm-factory";
 import {DiagnosisContext} from "./services/llm-adapter";
+import {replaceVariables, replaceVariablesInObject} from "./services/variable-replacer";
 // 请求参数接口
 interface IpcRequest {
     url: string
@@ -49,8 +50,33 @@ function headersToRecord(headers: http.OutgoingHttpHeaders): Record<string, stri
 
 async function performRequest(params: IpcRequest): Promise<IpcResponse> {
     const startTime = Date.now()
-    const { url, method, headers, body, timeout = 30000 } = params
+    let { url, method, headers, body, timeout = 30000 } = params
 
+    // 获取当前激活环境的变量
+    const envVars = encryptedDB.getActiveEnvironmentVariables()
+
+    // 替换 URL 中的变量
+    url = replaceVariables(url, envVars)
+
+    // 替换 Headers 中的变量（key 和 value）
+    const replacedHeaders: Record<string, string> = {}
+    for (const [key, value] of Object.entries(headers)) {
+        const replacedKey = replaceVariables(key, envVars)
+        replacedHeaders[replacedKey] = replaceVariables(value, envVars)
+    }
+    headers = replacedHeaders
+
+    // 替换 Body 中的变量（如果是 JSON 字符串）
+    if (body) {
+        try {
+            const parsed = JSON.parse(body)
+            const replaced = replaceVariablesInObject(parsed, envVars)
+            body = JSON.stringify(replaced)
+        } catch {
+            // 非 JSON 则直接字符串替换
+            body = replaceVariables(body, envVars)
+        }
+    }
     // 解析 URL，判断使用 http 还是 https
     const parsedUrl = new URL(url)
     const isHttps = parsedUrl.protocol === 'https:'
@@ -195,7 +221,18 @@ function generateTraceId(): string {
 
 // 注册 IPC 处理器
 export function registerRequestHandler() {
+    // 环境 CRUD
+    ipcMain.handle('env:getAll', () => encryptedDB.getAllEnvironments())
+    ipcMain.handle('env:create', (_, name: string, desc?: string) => encryptedDB.createEnvironment(name, desc))
+    ipcMain.handle('env:update', (_, id: number, name: string, desc?: string) => encryptedDB.updateEnvironment(id, name, desc))
+    ipcMain.handle('env:delete', (_, id: number) => encryptedDB.deleteEnvironment(id))
+    ipcMain.handle('env:setDefault', (_, id: number) => encryptedDB.setDefaultEnvironment(id))
 
+    // 变量 CRUD
+    ipcMain.handle('env:getVariables', (_, envId: number) => encryptedDB.getVariablesForEnvironment(envId))
+    ipcMain.handle('env:saveVariable', (_, envId: number, key: string, value: string, encrypted: boolean) =>
+        encryptedDB.saveVariable(envId, key, value, encrypted))
+    ipcMain.handle('env:deleteVariable', (_, envId: number, key: string) => encryptedDB.deleteVariable(envId, key))
     ipcMain.handle('http:request', async (event, params: IpcRequest) => {
         try {
             console.log(`[主进程] 收到请求: ${params.method} ${params.url}`)

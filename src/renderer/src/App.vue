@@ -164,6 +164,9 @@
         <el-tab-pane label="Body" name="body">
           <BodyEditor v-model="body" :content-type="bodyType" @update:content-type="bodyType = $event" />
         </el-tab-pane>
+        <el-tab-pane label="环境" name="env">
+          <EnvironmentManager />
+        </el-tab-pane>
         <el-tab-pane label="Auth" name="auth">
           <AuthPanel />
         </el-tab-pane>
@@ -327,6 +330,7 @@ import Settings from "./components/Settings.vue";
 import {DiagnosisContext, DiagnosisResult} from "../../main/services/llm-adapter";
 import {IpcResponse} from "../../preload/preload";
 import {parseCurl} from "./utils/curl-parser";
+import EnvironmentManager from "./components/EnvironmentManager.vue";
 
 
 
