@@ -47,8 +47,11 @@ const saveLLMSettings = async () => {
   ElMessage.success('配置已保存')
 }
 
+
+
 onMounted(async () => {
   const config = await window.api.getLLMConfig()
   llmProvider.value = config.provider
 })
+
 </script>

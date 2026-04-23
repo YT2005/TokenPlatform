@@ -132,6 +132,23 @@
           </div>
         </div>
 
+        <!-- 导出为API文档 -->
+        <div class="export-section">
+          <el-dropdown @command="handleExport">
+            <el-button type="primary" plain size="small">
+              导出 OpenAPI <el-icon><ArrowDown /></el-icon>
+            </el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <!--                <el-dropdown-item command="preview">-->
+                <!--                  <el-icon><View /></el-icon> 预览文档-->
+                <!--                </el-dropdown-item>-->
+                <el-dropdown-item command="json">JSON 格式</el-dropdown-item>
+                <el-dropdown-item command="yaml">YAML 格式</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
       </div>
     </aside>
 
@@ -314,24 +331,26 @@
       </el-tabs>
     </aside>
   </div>
+
 </template>
 
 <script setup lang="ts">
 
 import {ref, computed, onMounted, onUnmounted, watch} from 'vue'
-
-import ParamsTable from './components/ParamsTable.vue'
-import KeyValueTable from './components/KeyValueTable.vue'
-import BodyEditor from './components/BodyEditor.vue'
-import AuthPanel from './components/AuthPanel.vue'
 import {ElMessage, ElBadge, ElMessageBox} from "element-plus";
-import { CopyDocument, DataAnalysis,  Cloudy, PartlyCloudy, Sunny, Refresh,Check, Clock,Delete, Close, Search  } from '@element-plus/icons-vue'
-import Settings from "./components/Settings.vue";
-import {DiagnosisContext, DiagnosisResult} from "../../main/services/llm-adapter";
-import {IpcResponse} from "../../preload/preload";
-import {parseCurl} from "./utils/curl-parser";
-import EnvironmentManager from "./components/EnvironmentManager.vue";
+import { CopyDocument, DataAnalysis,  Cloudy, PartlyCloudy, Sunny, Refresh,Check, Clock,Delete, Close, Search ,ArrowDown } from '@element-plus/icons-vue';
+import yaml from 'js-yaml'
+import LZString from 'lz-string'
 
+import {DiagnosisContext, DiagnosisResult} from "../../main/services/llm-adapter";
+import {parseCurl} from "./utils/curl-parser";
+import {IpcResponse} from "../../preload/preload";
+import ParamsTable from "./components/ParamsTable.vue";
+import KeyValueTable from "./components/KeyValueTable.vue";
+import BodyEditor from "./components/BodyEditor.vue";
+import EnvironmentManager from "./components/EnvironmentManager.vue";
+import AuthPanel from "./components/AuthPanel.vue";
+import Settings from "./components/Settings.vue";
 
 
 
@@ -379,6 +398,17 @@ const historyStatusFilter = ref('all')
 // 批量删除模式
 const isBatchDeleteMode = ref(false)
 const selectedHistoryIds = ref<Set<number>>(new Set())
+
+const login = async () => {
+  try {
+    currentUser.value = await window.api.login()
+    ElMessage.success('登录成功')
+  } catch (e: any) {
+    console.error('登录错误:', e)
+    ElMessage.error(`登录失败: ${e.message || '未知错误'}`)
+  }
+}
+
 // 过滤函数（前端筛选）
 const applyHistoryFilters = () => {
   let result = [...historyList.value]
@@ -492,7 +522,64 @@ const loadHistoryItem = async (item: any) => {
   body.value = detail.request_body || ''
   activeTab.value = 'body' // 可选
   ElMessage.success('已加载历史请求')
-}// 响应式数据
+}
+
+
+const handleExport = async (format: string) => {
+  if (format === 'preview') {
+    await generateAndPreview()
+    return
+  }
+  try {
+
+    const spec = await window.api.exportOpenAPI() // 可传入域名过滤
+
+    let content: string
+    let mimeType: string
+    let ext: string
+
+    if (format === 'json') {
+      content = JSON.stringify(spec, null, 2)
+      mimeType = 'application/json'
+      ext = 'json'
+    } else {
+      content = yaml.dump(spec, { indent: 2 })
+      mimeType = 'text/yaml'
+      ext = 'yaml'
+    }
+
+    const blob = new Blob([content], { type: mimeType })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `openapi-${Date.now()}.${ext}`
+    a.click()
+    URL.revokeObjectURL(url)
+
+    ElMessage.success(`已导出 OpenAPI 3.0 文档 (${format.toUpperCase()})`)
+  } catch (e: any) {
+    ElMessage.error('导出失败: ' + e.message)
+  }
+}
+const generateAndPreview = async () => {
+  try {
+    const spec = await window.api.exportOpenAPI()
+
+    // 将 spec 压缩并编码为 URL 参数
+    const specStr = JSON.stringify(spec)
+    // 使用 LZ-String 压缩（需安装 lz-string）
+    const compressed = LZString.compressToEncodedURIComponent(specStr)
+    const previewUrl = `https://editor.swagger.io/?import=${compressed}`
+
+    // 在新窗口打开
+    window.open(previewUrl, '_blank')
+    ElMessage.success('已在新窗口打开 Swagger 预览')
+  } catch (e: any) {
+    ElMessage.error('生成失败: ' + e.message)
+  }
+}
+
+// 响应式数据
 
 const logsLoading = ref(false)
 const logEntries = ref<Array<{ timestamp: string; line: string; level?: string }>>([])
@@ -720,15 +807,6 @@ const applyCorrection = () => {
     }
   }
 }
-const login = async () => {
-  try {
-    currentUser.value = await window.api.login()
-    ElMessage.success('登录成功')
-  } catch (e: any) {
-    console.error('登录错误:', e)
-    ElMessage.error(`登录失败: ${e.message || '未知错误'}`)
-  }
-}
 
 const isOnline = ref(navigator.onLine)
 const unsyncedCount = ref(0)
@@ -784,9 +862,10 @@ const handleUserCommand = async (cmd: string) => {
   }
 }
 
+
 onMounted(async () => {
   console.log('window.api:', window.api)
-  currentUser.value = await window.api.getCurrentUser()
+  currentUser.value = await window.api.getToken()
   await refreshUnsyncedCount()
 })
 
@@ -795,6 +874,8 @@ onUnmounted(() => {
     window.api.removeSyncListener()
   }
 })
+
+
 </script>
 
 <style scoped>
@@ -843,7 +924,7 @@ onUnmounted(() => {
 }
 
 .history-list {
-  height: 13%;
+  height: 510px;
   overflow-y: auto;
   padding: 0 8px;
 }

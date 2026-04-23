@@ -8,6 +8,7 @@ import crypto from 'crypto';
 import {createLLMAdapter} from "./services/llm-factory";
 import {DiagnosisContext} from "./services/llm-adapter";
 import {replaceVariables, replaceVariablesInObject} from "./services/variable-replacer";
+import {generateOpenAPISpec} from "./services/openapi-generator";
 // 请求参数接口
 interface IpcRequest {
     url: string
@@ -161,6 +162,7 @@ async function performRequest(params: IpcRequest): Promise<IpcResponse> {
 
                 // 存储请求记录到数据库
                 const finalHeaders =  { ...headers, ...headersToRecord((options.headers || {} ) as http.OutgoingHttpHeaders) }
+
                 try {
                     encryptedDB.saveRequestRecord({
                         traceId,
@@ -290,7 +292,7 @@ export function registerRequestHandler() {
         apiKey?: string
         keyType?: 'deepseek' | 'zhipu'
     }) => {
-        encryptedDB.saveSetting('llm.provider', config.provider)
+        encryptedDB.saveSetting('llm.provider', config.provider,true)
         if (config.apiKey && config.keyType) {
             const keyMap: Record<string, string> = {
                 deepseek: 'llm.deepseek.apiKey',
@@ -312,6 +314,10 @@ export function registerRequestHandler() {
             hasApiKey = !!encryptedDB.getSetting('llm.zhipu.apiKey')
         }
         return { provider, hasApiKey }
+    })
+
+    ipcMain.handle('export:openapi', async (_, domainFilter?: string) => {
+        return await generateOpenAPISpec(domainFilter)
     })
 
 }

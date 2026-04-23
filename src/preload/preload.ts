@@ -28,7 +28,7 @@ export interface UserInfo {
 }
 
 contextBridge.exposeInMainWorld('api', {
-    getEnvironments: () => ipcRenderer.invoke('env:getAll'),
+    getAllEnvironments: () => ipcRenderer.invoke('env:getAll'),
     createEnvironment: (name: string, desc?: string) => ipcRenderer.invoke('env:create', name, desc),
     updateEnvironment: (id: number, name: string, desc?: string) => ipcRenderer.invoke('env:update', id, name, desc),
     deleteEnvironment: (id: number) => ipcRenderer.invoke('env:delete', id),
@@ -46,11 +46,11 @@ contextBridge.exposeInMainWorld('api', {
         ipcRenderer.invoke('auth:login'),
     logout: () : Promise<void> =>
         ipcRenderer.invoke('auth:logout'),
-    getCurrentUser: () : Promise<UserInfo | null> =>
+    getToken: () : Promise<UserInfo | null> =>
         ipcRenderer.invoke('auth:getCurrentUser'),
     saveToken: (domain: string, token: string) =>
         ipcRenderer.invoke('vault:saveToken', domain, token),
-    getTokenDomains: ()=>
+    getAllDomains: ()=>
         ipcRenderer.invoke('vault:getDomains'),
     deleteToken: (domain : string) =>
         ipcRenderer.invoke('vault:deleteToken', domain),
@@ -64,5 +64,7 @@ contextBridge.exposeInMainWorld('api', {
     triggerSync: () => ipcRenderer.invoke('sync:trigger'),
     getUnsyncedCount: () => ipcRenderer.invoke('sync:getUnsyncedCount'),
     onSyncCompleted: (callback: () => void) => ipcRenderer.on('sync:completed', callback),
-    removeSyncListener: () => ipcRenderer.removeAllListeners('sync:completed')
+    removeSyncListener: () => ipcRenderer.removeAllListeners('sync:completed'),
+    exportOpenAPI: (domainFilter?: string) => ipcRenderer.invoke('export:openapi', domainFilter),
+
 })

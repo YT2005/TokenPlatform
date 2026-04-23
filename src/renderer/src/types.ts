@@ -34,7 +34,7 @@ interface LogEntry {
 declare global {
     interface Window {
         api: {
-            getEnvironments: () => Promise<any[]>
+            getAllEnvironments: () => Promise<any[]>
             createEnvironment: (name: string, desc?: string) => Promise<number>
             updateEnvironment: (id: number, name: string, desc?: string) => Promise<void>
             deleteEnvironment: (id: number) => Promise<void>
@@ -45,9 +45,9 @@ declare global {
             sendRequest: (params: IpcRequest) => Promise<IpcResponse>
             login: () => Promise<UserInfo>
             logout: () => Promise<void>
-            getCurrentUser: () => Promise<UserInfo | null>
+            getToken: () => Promise<UserInfo | null>
             saveToken: (domain: string, token: string) => Promise<void>
-            getTokenDomains: () => Promise<string[]>
+            getAllDomains: () => Promise<string[]>
             deleteToken: (domain: string) => Promise<void>
             fetchLogs: (traceId: string) => Promise<LogEntry[]>
             diagnose: (context: DiagnosisContext) => Promise<{ success: boolean; result?: DiagnosisResult; error?: string ;errorType?: string}>
@@ -60,6 +60,7 @@ declare global {
             getUnsyncedCount: () => Promise<number>
             onSyncCompleted: (callback: () => void) => void
             removeSyncListener: () => void
+            exportOpenAPI: (domainFilter?: string) => Promise<any>
         }
     }
 }

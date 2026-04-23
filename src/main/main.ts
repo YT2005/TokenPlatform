@@ -13,6 +13,7 @@ import {encryptedDB} from "./database/encrypted-db";
 import {registerSSOHandlers} from "./auth/sso-handler";
 
 
+
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
     app.quit();
@@ -29,6 +30,8 @@ const createWindow = () => {
             nodeIntegration: false,
         },
     });
+
+
 
     // and load the index.html of the app.
     if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
@@ -71,18 +74,21 @@ app.on('activate', () => {
 
 app.setAsDefaultProtocolClient('myapp')
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+        encryptedDB.init()
 
-    encryptedDB.init()
 
-    //注册 IPC 请求处理器
-    registerRequestHandler()
-    registerSSOHandlers()
-    registerSyncHandlers()
-    initSyncService()
-    createWindow()
-    // ...
-})
+
+        //注册 IPC 请求处理器
+        registerRequestHandler()
+        registerSSOHandlers()
+        registerSyncHandlers()
+        initSyncService()
+        createWindow()
+        // ...
+    }
+
+)
 
 app.on('will-quit', () => {
     stopSyncService()

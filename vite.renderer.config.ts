@@ -31,5 +31,11 @@ export default defineConfig((env) => {
             preserveSymlinks: true,
         },
         clearScreen: false,
+        optimizeDeps: {
+            include: ['swagger-ui-dist']
+        },
+        assetsInclude: ['**/*.png', '**/*.gif', '**/*.svg']
+
     } as UserConfig;
+
 });

@@ -73,7 +73,7 @@ export class BigmodelAdapter implements LLMAdapter {
 ## 请求信息
 - URL: ${request.url}
 - Method: ${request.method}
-- Headers: ${JSON.stringify(this.sanitizeHeaders(request.headers))}
+- Headers: ${JSON.stringify(request.headers)}
 - Body: ${request.body || '(无)'}
 
 ## 响应信息
@@ -87,14 +87,6 @@ ${logs && logs.length > 0 ? logs.join('\n') : '(无日志)'}
 请分析错误原因并提供修复方案。`
     }
 
-    private sanitizeHeaders(headers: Record<string, string>): Record<string, string> {
-        const sensitive = ['authorization', 'cookie', 'x-api-key']
-        const sanitized: Record<string, string> = {}
-        for (const [k, v] of Object.entries(headers)) {
-            sanitized[k] = sensitive.includes(k.toLowerCase()) ? '***REDACTED***' : v
-        }
-        return sanitized
-    }
 
     private parseResponse(content: string): DiagnosisResult {
         try {

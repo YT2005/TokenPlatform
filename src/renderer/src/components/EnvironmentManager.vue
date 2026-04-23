@@ -103,7 +103,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Edit, Delete, Check, Lock } from '@element-plus/icons-vue'
 
@@ -134,7 +134,7 @@ const varForm = ref({ key: '', value: '', encrypted: false })
 
 // 加载环境列表
 const loadEnvironments = async () => {
-  environments.value = await window.api.getEnvironments()
+  environments.value = await window.api.getAllEnvironments()
   const defaultEnv = environments.value.find(e => e.is_default === 1)
   if (defaultEnv) {
     currentEnvId.value = defaultEnv.id

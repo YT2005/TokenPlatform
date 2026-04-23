@@ -26,6 +26,7 @@ class EncryptedDB {
     }
 
     init(): void {
+
         const dbPath = path.join(app.getPath('userData'), 'api-client.db')
         this.db = new Database(dbPath)
         // 启用 WAL 模式，大幅减少锁冲突
@@ -145,7 +146,7 @@ class EncryptedDB {
         return this.db!.prepare(`SELECT * FROM env_variables WHERE env_id = ? ORDER BY key`).all(envId)
     }
 
-    saveVariable(envId: number, key: string, value: string, shouldEncrypt: boolean = false): void {
+    saveVariable(envId: number, key: string, value: string, shouldEncrypt: boolean ): void {
         const finalValue = shouldEncrypt ? this.encrypt(value) : value
         this.db!.prepare(`
     INSERT INTO env_variables (env_id, key, value, encrypted) VALUES (?, ?, ?, ?)
@@ -267,6 +268,18 @@ class EncryptedDB {
         const stmt = this.db!.prepare(`SELECT * FROM requests WHERE id = ?`)
         return stmt.get(id)
     }
+    // 获取所有成功请求记录（2xx状态码），支持按域名过滤
+    getSuccessfulRequests(domainFilter?: string): any[] {
+        if (!this.db) throw new Error('数据库未初始化')
+        let sql = `SELECT * FROM requests WHERE response_status >= 200 AND response_status < 300`
+        const params: any[] = []
+        if (domainFilter) {
+            sql += ` AND url LIKE ?`
+            params.push(`%${domainFilter}%`)
+        }
+        sql += ` ORDER BY created_at DESC`
+        return this.db.prepare(sql).all(...params)
+    }
     deleteRequestRecords(ids: number[]): void {
         if (!this.db || ids.length === 0) return
         const placeholders = ids.map(() => '?').join(',')
@@ -298,7 +311,7 @@ class EncryptedDB {
 
     // ========== 设置管理 ==========
     // 保存设置（可选择加密）
-    saveSetting(key: string, value: string, shouldEncrypt: boolean = false): void {
+    saveSetting(key: string, value: string, shouldEncrypt: boolean): void {
         if (!this.db) throw new Error('数据库未初始化')
         const finalValue = shouldEncrypt ? this.encrypt(value) : value
         const stmt = this.db.prepare(`

@@ -43,7 +43,7 @@ const saving = ref(false)
 const loadVaultTokens = async () => {
   loading.value = true
   try {
-    const domains = await window.api.getTokenDomains()
+    const domains = await window.api.getAllDomains()
     vaultTokens.value = domains.map(d => ({ domain: d }))
   } catch (e) {
     ElMessage.error('获取保险箱列表失败')
@@ -63,7 +63,7 @@ const saveTokenToVault = async () => {
   }
   saving.value = true
   try {
-    window.api.saveToken(currentDomain.value.trim(), token.value)
+    await window.api.saveToken(currentDomain.value.trim(), token.value)
     token.value = ''
     currentDomain.value = ''
     await loadVaultTokens()
